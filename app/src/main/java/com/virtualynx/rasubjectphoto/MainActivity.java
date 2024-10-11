@@ -1,15 +1,20 @@
 package com.virtualynx.rasubjectphoto;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.view.View;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.Spinner;
 import android.widget.Toast;
@@ -28,7 +33,9 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +53,8 @@ public class MainActivity extends AppCompatActivity {
     static final String serverHost = "http://36.88.110.134:881/biometric";
     private AutoCompleteTextView autoTextPerson;
     private ImageView imagePhoto;
+    private FrameLayout progressOverlay;
+    private Bitmap capturedPhoto;
     private final HashMap<String, String> doctypeMaps = new HashMap<String, String>(){
         {
             put("TTD Pemanfaatan", "sign_util");
@@ -68,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         autoTextPerson = (AutoCompleteTextView)findViewById(R.id.autotxt_persons);
+        progressOverlay = findViewById(R.id.progress_overlay);
 
         autoTextPerson.setOnClickListener(v -> {
             autoTextPerson.setText("");
@@ -103,6 +113,19 @@ public class MainActivity extends AppCompatActivity {
                                 ArrayAdapter<String> adapter = new ArrayAdapter<String>(getApplicationContext(), R.layout.row_list, personArr);
                                 autoTextPerson.setThreshold(1);
                                 autoTextPerson.setAdapter(adapter);
+//                                autoTextPerson.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+//                                    @Override
+//                                    public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+////                                        hideKeyboard(MainActivity.this);
+//
+//                                        InputMethodManager inputManager = (InputMethodManager)MainActivity.this.getSystemService(Context.INPUT_METHOD_SERVICE);
+//                                        inputManager.hideSoftInputFromWindow(MainActivity.this.getCurrentFocus().getWindowToken(), InputMethodManager.HIDE_NOT_ALWAYS);
+//                                    }
+//                                    @Override
+//                                    public void onNothingSelected(AdapterView<?> parent) {
+//                                        int a = 1;
+//                                    }
+//                                });
 
                                 int a = 1;
                             }
@@ -134,7 +157,8 @@ public class MainActivity extends AppCompatActivity {
 
         Button buttonPhoto = findViewById(R.id.button_take_photo);
         Button uploadPhoto = findViewById(R.id.button_upload);
-        this.imagePhoto = findViewById(R.id.image_photo);
+        imagePhoto = findViewById(R.id.image_photo);
+        imagePhoto.setVisibility(View.GONE);
 
         buttonPhoto.setOnClickListener(v -> {
             String nik = getSelectedPersonNik();
@@ -177,11 +201,15 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
             ((BitmapDrawable)imagePhoto.getDrawable()).getBitmap().compress(Bitmap.CompressFormat.JPEG, 100, imageStream); //bitmap is required image which have to send  in Bitmap form
+//            capturedPhoto.compress(Bitmap.CompressFormat.JPEG, 100, imageStream);
+            capturedPhoto.compress(Bitmap.CompressFormat.PNG, 100, imageStream);
             byte[] imageBytes = imageStream.toByteArray();
-            String encodedImage = "data:image/jpeg;base64,"+Base64.encodeToString(imageBytes, Base64.DEFAULT);
+//            String encodedImage = "data:image/jpeg;base64,"+Base64.encodeToString(imageBytes, Base64.DEFAULT);
+            String encodedImage = "data:image/png;base64,"+Base64.encodeToString(imageBytes, Base64.DEFAULT);
 
             String photoType = spinnerDoctype.getSelectedItem().toString();
             String photoTypeId = doctypeMaps.get(photoType).toString();
+            String filename = photoTypeId+"_"+""+new SimpleDateFormat("yyyy_MM_dd_hhmmss").format(new Date())+".jpeg";
 
             RequestBody requestBody = new MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
@@ -191,7 +219,7 @@ public class MainActivity extends AppCompatActivity {
 //                            RequestBody.create(MediaType.parse("image/jpeg"), file)
 //                    )
                     .addFormDataPart("nik", nik)
-                    .addFormDataPart("filename", photoTypeId+System.currentTimeMillis()+".jpeg")
+                    .addFormDataPart("filename", filename)
                     .addFormDataPart("photo_type", photoTypeId)
                     .addFormDataPart("description", photoType)
                     .addFormDataPart("is_base64", "true")
@@ -203,9 +231,12 @@ public class MainActivity extends AppCompatActivity {
                     .post(requestBody)
                     .build();
 
+            progressOverlay.setVisibility(View.VISIBLE);
             client.newCall(uploadPhotoRequest).enqueue(new Callback() {
                 @Override
                 public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                    progressOverlay.setVisibility(View.INVISIBLE);
+                    imagePhoto.setVisibility(View.GONE);
                     MainActivity.this.runOnUiThread(new Runnable() {
                         public void run() {
                             Toast.makeText(MainActivity.this, e.getMessage(), Toast.LENGTH_LONG).show();
@@ -215,11 +246,13 @@ public class MainActivity extends AppCompatActivity {
 
                 @Override
                 public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                    progressOverlay.setVisibility(View.INVISIBLE);
                     if(response.isSuccessful()) {
                         MainActivity.this.runOnUiThread(new Runnable() {
                             public void run() {
                                 Toast.makeText(MainActivity.this, "Photo uploaded successfully", Toast.LENGTH_SHORT).show();
                                 imagePhoto.setImageDrawable(null);
+                                capturedPhoto = null;
                             }
                         });
                     }else{
@@ -228,7 +261,6 @@ public class MainActivity extends AppCompatActivity {
                         MainActivity.this.runOnUiThread(new Runnable() {
                             public void run() {
                                 Toast.makeText(MainActivity.this, responseBody, Toast.LENGTH_SHORT).show();
-                                imagePhoto.setImageDrawable(null);
                             }
                         });
                     }
@@ -244,6 +276,7 @@ public class MainActivity extends AppCompatActivity {
                 Bitmap photo = (Bitmap) result.getData().getExtras().get("data");
                 // Set the image in imageview for display
                 imagePhoto.setImageBitmap(photo);
+                imagePhoto.setVisibility(View.VISIBLE);
             }else{
                 MainActivity.this.runOnUiThread(new Runnable() {
                     public void run() {
@@ -264,5 +297,16 @@ public class MainActivity extends AppCompatActivity {
         String[] nameNikArr = nameNik.split("\\|");
 
         return nameNikArr[1].trim();
+    }
+
+    private void hideKeyboard(Activity activity) {
+        InputMethodManager imm = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
+        //Find the currently focused view, so we can grab the correct window token from it.
+        View view = activity.getCurrentFocus();
+        //If no view currently has focus, create a new one, just so we can grab a window token from it
+        if (view == null) {
+            view = new View(activity);
+        }
+        imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
     }
 }
