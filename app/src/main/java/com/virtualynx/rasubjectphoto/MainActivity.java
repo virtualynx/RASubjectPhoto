@@ -1,13 +1,22 @@
 package com.virtualynx.rasubjectphoto;
 
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
+import android.graphics.ImageDecoder;
 import android.graphics.drawable.BitmapDrawable;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.os.StrictMode;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.util.Log;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
@@ -16,6 +25,7 @@ import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.Spinner;
 import android.widget.Toast;
 
@@ -24,6 +34,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -32,6 +43,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -39,6 +51,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -53,7 +66,7 @@ public class MainActivity extends AppCompatActivity {
     static final String serverHost = "http://36.88.110.134:881/biometric";
     private AutoCompleteTextView autoTextPerson;
     private ImageView imagePhoto;
-    private FrameLayout progressOverlay;
+    private Uri fileUri;
     private Bitmap capturedPhoto;
     private final HashMap<String, String> doctypeMaps = new HashMap<String, String>(){
         {
@@ -64,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
         }
     };
     private Spinner spinnerDoctype;
+    private ProgressBar progressBarLoading;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,8 +90,9 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
+        progressBarLoading = findViewById(R.id.progressbar_loading);
+        progressBarLoading.setVisibility(View.GONE);
         autoTextPerson = (AutoCompleteTextView)findViewById(R.id.autotxt_persons);
-        progressOverlay = findViewById(R.id.progress_overlay);
 
         autoTextPerson.setOnClickListener(v -> {
             autoTextPerson.setText("");
@@ -171,13 +186,13 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
+            fileUri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, new ContentValues());
+
             // Create the camera_intent ACTION_IMAGE_CAPTURE it will open the camera for capture the image
-            Intent camera_intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, fileUri);
 
-            // Start the activity with camera_intent, and request pic id
-//            startActivityForResult(camera_intent, pic_id);
-
-            startCameraIntent.launch(camera_intent);
+            startCameraIntent.launch(cameraIntent);
         });
 
         uploadPhoto.setOnClickListener(v -> {
@@ -200,16 +215,16 @@ public class MainActivity extends AppCompatActivity {
                 });
                 return;
             }
-            ((BitmapDrawable)imagePhoto.getDrawable()).getBitmap().compress(Bitmap.CompressFormat.JPEG, 100, imageStream); //bitmap is required image which have to send  in Bitmap form
-//            capturedPhoto.compress(Bitmap.CompressFormat.JPEG, 100, imageStream);
-            capturedPhoto.compress(Bitmap.CompressFormat.PNG, 100, imageStream);
+//            ((BitmapDrawable)imagePhoto.getDrawable()).getBitmap().compress(Bitmap.CompressFormat.JPEG, 100, imageStream); //bitmap is required image which have to send  in Bitmap form
+            capturedPhoto.compress(Bitmap.CompressFormat.JPEG, 100, imageStream);
+//            capturedPhoto.compress(Bitmap.CompressFormat.PNG, 100, imageStream);
             byte[] imageBytes = imageStream.toByteArray();
-//            String encodedImage = "data:image/jpeg;base64,"+Base64.encodeToString(imageBytes, Base64.DEFAULT);
-            String encodedImage = "data:image/png;base64,"+Base64.encodeToString(imageBytes, Base64.DEFAULT);
+            String encodedImage = "data:image/jpeg;base64,"+Base64.encodeToString(imageBytes, Base64.DEFAULT);
+//            String encodedImage = "data:image/png;base64,"+Base64.encodeToString(imageBytes, Base64.DEFAULT);
 
             String photoType = spinnerDoctype.getSelectedItem().toString();
             String photoTypeId = doctypeMaps.get(photoType).toString();
-            String filename = photoTypeId+"_"+""+new SimpleDateFormat("yyyy_MM_dd_hhmmss").format(new Date())+".jpeg";
+            String filename = photoTypeId+"_"+""+new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date())+".jpeg";
 
             RequestBody requestBody = new MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
@@ -231,12 +246,13 @@ public class MainActivity extends AppCompatActivity {
                     .post(requestBody)
                     .build();
 
-            progressOverlay.setVisibility(View.VISIBLE);
+            imagePhoto.setVisibility(View.GONE);
+            progressBarLoading.setVisibility(View.VISIBLE);
             client.newCall(uploadPhotoRequest).enqueue(new Callback() {
                 @Override
                 public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                    progressOverlay.setVisibility(View.INVISIBLE);
-                    imagePhoto.setVisibility(View.GONE);
+                    imagePhoto.setVisibility(View.VISIBLE);
+                    progressBarLoading.setVisibility(View.GONE);
                     MainActivity.this.runOnUiThread(new Runnable() {
                         public void run() {
                             Toast.makeText(MainActivity.this, e.getMessage(), Toast.LENGTH_LONG).show();
@@ -246,13 +262,20 @@ public class MainActivity extends AppCompatActivity {
 
                 @Override
                 public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                    progressOverlay.setVisibility(View.INVISIBLE);
+                    MainActivity.this.runOnUiThread(new Runnable() {
+                        public void run() {
+                            progressBarLoading.setVisibility(View.GONE);
+                        }
+                    });
+
                     if(response.isSuccessful()) {
+                        capturedPhoto = null;
+                        new File(fileUri.getPath()).delete();
+
                         MainActivity.this.runOnUiThread(new Runnable() {
                             public void run() {
-                                Toast.makeText(MainActivity.this, "Photo uploaded successfully", Toast.LENGTH_SHORT).show();
                                 imagePhoto.setImageDrawable(null);
-                                capturedPhoto = null;
+                                Toast.makeText(MainActivity.this, "Photo uploaded successfully", Toast.LENGTH_SHORT).show();
                             }
                         });
                     }else{
@@ -260,6 +283,7 @@ public class MainActivity extends AppCompatActivity {
 
                         MainActivity.this.runOnUiThread(new Runnable() {
                             public void run() {
+                                imagePhoto.setVisibility(View.VISIBLE);
                                 Toast.makeText(MainActivity.this, responseBody, Toast.LENGTH_SHORT).show();
                             }
                         });
@@ -273,16 +297,27 @@ public class MainActivity extends AppCompatActivity {
         new ActivityResultContracts.StartActivityForResult(),
         result -> {
             if (result.getResultCode() == Activity.RESULT_OK) {
-                Bitmap photo = (Bitmap) result.getData().getExtras().get("data");
-                // Set the image in imageview for display
-                imagePhoto.setImageBitmap(photo);
+//                Bitmap photo = (Bitmap) result.getData().getExtras().get("data");
+//                imagePhoto.setImageBitmap(photo);
                 imagePhoto.setVisibility(View.VISIBLE);
+
+//                capturedPhoto = MediaStore.Images.Media.getBitmap(getContext().getContentResolver(), fileUri);
+                ImageDecoder.Source source = ImageDecoder.createSource(MainActivity.this.getContentResolver(), fileUri);
+                try {
+                    capturedPhoto = ImageDecoder.decodeBitmap(source);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+
+                imagePhoto.setImageBitmap(capturedPhoto);
             }else{
-                MainActivity.this.runOnUiThread(new Runnable() {
-                    public void run() {
-                        Toast.makeText(MainActivity.this, result.getResultCode(), Toast.LENGTH_SHORT).show();
-                    }
-                });
+//                MainActivity.this.runOnUiThread(new Runnable() {
+//                    public void run() {
+//                        Toast.makeText(MainActivity.this, result.getResultCode(), Toast.LENGTH_SHORT).show();
+//                    }
+//                });
+                Toast.makeText(this, result.getResultCode(), Toast.LENGTH_SHORT).show();
+                Log.e("error", "error-message");
             }
         }
     );
